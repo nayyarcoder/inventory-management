@@ -27,6 +27,40 @@
         </div>
       </div>
 
+      <div v-if="restockingOrders.length > 0" class="card restocking-orders-section">
+        <div class="card-header">
+          <h3 class="card-title">Submitted Restocking Orders</h3>
+        </div>
+        <div class="table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th>SKU</th>
+                <th>Warehouse</th>
+                <th>Restock Qty</th>
+                <th>Total Cost</th>
+                <th>Lead Time</th>
+                <th>Expected Delivery</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="order in restockingOrders" :key="order.id">
+                <td>{{ order.item_name }}</td>
+                <td class="sku-cell">{{ order.item_sku }}</td>
+                <td>{{ order.warehouse }}</td>
+                <td>{{ order.restock_quantity.toLocaleString() }}</td>
+                <td>${{ order.total_cost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}</td>
+                <td>14 days</td>
+                <td>{{ formatDate(order.expected_delivery) }}</td>
+                <td><span class="badge info">{{ order.status }}</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <div class="card">
         <div class="card-header">
           <h3 class="card-title">{{ t('orders.allOrders') }} ({{ orders.length }})</h3>
@@ -95,6 +129,16 @@ export default {
     const loading = ref(true)
     const error = ref(null)
     const orders = ref([])
+    const restockingOrders = ref([])
+
+    const loadRestockingOrders = async () => {
+      try {
+        restockingOrders.value = await api.getRestockingOrders()
+      } catch (err) {
+        // Non-critical: don't block the main orders view
+        console.error('Failed to load restocking orders:', err)
+      }
+    }
 
     // Use shared filters
     const {
@@ -153,7 +197,10 @@ export default {
       })
     }
 
-    onMounted(loadOrders)
+    onMounted(() => {
+      loadOrders()
+      loadRestockingOrders()
+    })
 
     return {
       t,
@@ -165,7 +212,8 @@ export default {
       formatDate,
       currencySymbol,
       translateProductName,
-      translateCustomerName
+      translateCustomerName,
+      restockingOrders
     }
   }
 }
