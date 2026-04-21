@@ -2,7 +2,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from pydantic import BaseModel
-from mock_data import inventory_items, orders, demand_forecasts, backlog_items, spending_summary, monthly_spending, category_spending, recent_transactions, purchase_orders
+from datetime import datetime, timedelta
+from mock_data import inventory_items, orders, demand_forecasts, backlog_items, spending_summary, monthly_spending, category_spending, recent_transactions, purchase_orders, restocking_orders
 
 app = FastAPI(title="Factory Inventory Management System")
 
@@ -119,6 +120,26 @@ class CreatePurchaseOrderRequest(BaseModel):
     unit_cost: float
     expected_delivery_date: str
     notes: Optional[str] = None
+
+class RestockingOrder(BaseModel):
+    id: str
+    item_sku: str
+    item_name: str
+    warehouse: str
+    restock_quantity: int
+    unit_cost: float
+    total_cost: float
+    status: str
+    created_date: str
+    expected_delivery: str
+    demand_forecast_id: str
+
+class CreateRestockingOrderRequest(BaseModel):
+    item_sku: str
+    item_name: str
+    restock_quantity: int
+    unit_cost: float
+    demand_forecast_id: str
 
 # API endpoints
 @app.get("/")
@@ -303,6 +324,79 @@ def get_monthly_trends():
     result = list(months.values())
     result.sort(key=lambda x: x['month'])
     return result
+
+@app.get("/api/restocking-recommendations")
+def get_restocking_recommendations():
+    """Return demand forecast items with increasing trend, enriched with inventory cost data."""
+    # Build a SKU lookup from inventory for O(1) access
+    inventory_by_sku = {item["sku"]: item for item in inventory_items}
+
+    results = []
+    for forecast in demand_forecasts:
+        if forecast.get("trend") != "increasing":
+            continue
+
+        sku = forecast["item_sku"]
+        inv_item = inventory_by_sku.get(sku)
+        if not inv_item:
+            # Skip forecasts with no matching inventory item
+            continue
+
+        restock_quantity = forecast["forecasted_demand"] - forecast["current_demand"]
+        if restock_quantity <= 0:
+            continue
+
+        unit_cost = inv_item["unit_cost"]
+        total_cost = round(restock_quantity * unit_cost, 2)
+
+        results.append({
+            "demand_forecast_id": forecast["id"],
+            "item_sku": sku,
+            "item_name": forecast["item_name"],
+            "warehouse": inv_item["warehouse"],
+            "current_demand": forecast["current_demand"],
+            "forecasted_demand": forecast["forecasted_demand"],
+            "restock_quantity": restock_quantity,
+            "unit_cost": unit_cost,
+            "total_cost": total_cost,
+        })
+
+    # Highest-impact items first
+    results.sort(key=lambda x: x["total_cost"], reverse=True)
+    return results
+
+
+@app.get("/api/restocking-orders", response_model=List[RestockingOrder])
+def get_restocking_orders():
+    """Get all submitted restocking orders."""
+    return restocking_orders
+
+
+@app.post("/api/restocking-orders", response_model=RestockingOrder)
+def create_restocking_order(request: CreateRestockingOrderRequest):
+    """Create a new restocking order. Delivery is fixed at 14 days from now."""
+    # Validate the SKU exists in inventory
+    inv_item = next((item for item in inventory_items if item["sku"] == request.item_sku), None)
+    if not inv_item:
+        raise HTTPException(status_code=404, detail=f"Inventory item with SKU {request.item_sku} not found")
+
+    now = datetime.now()
+    new_order = {
+        "id": str(len(restocking_orders) + 1),
+        "item_sku": request.item_sku,
+        "item_name": request.item_name,
+        "warehouse": inv_item["warehouse"],
+        "restock_quantity": request.restock_quantity,
+        "unit_cost": request.unit_cost,
+        "total_cost": round(request.restock_quantity * request.unit_cost, 2),
+        "status": "Submitted",
+        "created_date": now.isoformat(),
+        "expected_delivery": (now + timedelta(days=14)).isoformat(),
+        "demand_forecast_id": request.demand_forecast_id,
+    }
+    restocking_orders.append(new_order)
+    return new_order
+
 
 if __name__ == "__main__":
     import uvicorn
